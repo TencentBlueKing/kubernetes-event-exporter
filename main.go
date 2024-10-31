@@ -76,6 +76,7 @@ func main() {
 	}
 	kubecfg.QPS = cfg.KubeQPS
 	kubecfg.Burst = cfg.KubeBurst
+	kubecfg.ContentType = "application/vnd.kubernetes.protobuf"
 
 	metrics.Init(*addr, *tlsConf)
 	metricsStore := metrics.NewMetricsStore(cfg.MetricsNamePrefix)
