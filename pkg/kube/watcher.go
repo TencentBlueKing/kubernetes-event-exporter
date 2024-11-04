@@ -3,7 +3,7 @@ package kube
 import (
 	"context"
 	"errors"
-	"math/rand"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -52,6 +52,7 @@ func NewEventWatcher(config *rest.Config, namespace string, MaxEventAgeSeconds i
 type innerWatcher struct {
 	ctx                 context.Context
 	namespace           string
+	count               int
 	clientset           *kubernetes.Clientset
 	ch                  chan innerEvent
 	closed              chan struct{}
@@ -77,7 +78,7 @@ func (iw *innerWatcher) Ch() chan innerEvent {
 	return iw.ch
 }
 
-func (iw *innerWatcher) StartOrDie() {
+func (iw *innerWatcher) MustStart() {
 	if err := iw.Start(); err != nil {
 		panic(err)
 	}
@@ -102,9 +103,8 @@ func (iw *innerWatcher) Start() error {
 			return nil
 
 		case <-iw.closed:
-			n := time.Duration(10 + rand.Int31n(10))
-			log.Error().Msgf("Recv closed signal, waiting (%ds) then try to reconnecting", n)
-			time.Sleep(n * time.Second)
+			log.Warn().Msg("Recv closed signal, try to reconnecting")
+			time.Sleep(10 * time.Second)
 			metrics.Default.RerunTotal.Add(1)
 			if err := iw.run(); err != nil {
 				return err
@@ -143,7 +143,8 @@ func (iw *innerWatcher) lastRV() (int, error) {
 }
 
 func (iw *innerWatcher) run() error {
-	log.Info().Int("LastResourceVersion", iw.lastResourceVersion).Msg("run inner-watcher")
+	iw.count++
+	log.Info().Int("ResourceVersion", iw.lastResourceVersion).Msgf("run inner-watcher at (%d) times", iw.count)
 	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{
 		ResourceVersion: strconv.Itoa(iw.lastResourceVersion),
 	})
@@ -162,9 +163,21 @@ func (iw *innerWatcher) run() error {
 					return
 				}
 
-				event, ok := e.Object.(*corev1.Event)
-				if !ok {
-					log.Error().Msgf("Expected Event type, but got (%T), event.Type(%v), event.obj=(%#v)", e.Object, e.Type, e.Object)
+				var event *corev1.Event
+				switch obj := e.Object.(type) {
+				case *corev1.Event:
+					event = obj
+
+				case *metav1.Status:
+					if obj.Code == http.StatusGone {
+						panic("RV too old errors")
+					}
+					log.Error().Msgf("Recv Status Event: %#v", obj)
+					metrics.Default.WatchErrors.Inc()
+					continue
+
+				default:
+					log.Error().Msgf("Unknown Type (%T), event.Type(%v), event.Obj=(%#v)", e.Object, e.Type, e.Object)
 					metrics.Default.WatchErrors.Inc()
 					continue
 				}
@@ -253,7 +266,7 @@ func (e *EventWatcher) Start() {
 
 	go func() {
 		defer e.wg.Done()
-		e.iw.StartOrDie()
+		e.iw.MustStart()
 	}()
 
 	go func() {
