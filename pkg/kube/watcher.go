@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -132,14 +133,18 @@ func (iw *innerWatcher) lastRV() (string, error) {
 		return "", errors.New("unknown resource version")
 	}
 
+	log.Info().Msgf("get last resource version: %v", lastRv)
 	return lastRv, nil
 }
 
 func (iw *innerWatcher) run() error {
 	iw.count++
+
+	timeout := int64(7200)
 	log.Info().Str("ResourceVersion", iw.lastResourceVersion).Msgf("run inner-watcher at (%d) times", iw.count)
 	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{
 		ResourceVersion: iw.lastResourceVersion,
+		TimeoutSeconds:  &timeout,
 	})
 	if err != nil {
 		return err
@@ -163,7 +168,11 @@ func (iw *innerWatcher) run() error {
 
 				case *metav1.Status:
 					if obj.Code == http.StatusGone {
-						panic("RV too old errors")
+						rv, err := iw.lastRV()
+						if err != nil {
+							panic(fmt.Errorf("RV too old errors: %v", err))
+						}
+						iw.lastResourceVersion = rv
 					}
 					log.Error().Msgf("Recv Status Event: %#v", obj)
 					metrics.Default.WatchErrors.Inc()
