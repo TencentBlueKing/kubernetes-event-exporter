@@ -75,7 +75,7 @@ func (iw *innerWatcher) MustStart() {
 
 func (iw *innerWatcher) Start() error {
 	eventClient := iw.clientset.CoreV1().Events(iw.namespace)
-	w, err := toolswtach.NewRetryWatcher("", &cache.ListWatch{
+	w, err := toolswtach.NewRetryWatcher("1", &cache.ListWatch{
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 			return eventClient.Watch(iw.ctx, options)
 		},
