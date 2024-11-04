@@ -124,6 +124,12 @@ func (e *EventWatcher) loopHandle() {
 			if evt.Type == watch.Added {
 				e.OnAdd(evt.Object)
 			}
+			if evt.Type == watch.Error {
+				status, ok := evt.Object.(*metav1.Status)
+				if ok {
+					log.Error().Msgf("Recv error: %#v", status)
+				}
+			}
 
 		case <-e.ctx.Done():
 			return
