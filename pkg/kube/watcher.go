@@ -2,7 +2,7 @@ package kube
 
 import (
 	"context"
-	"os"
+	"flag"
 	"sync"
 	"time"
 
@@ -20,7 +20,11 @@ import (
 )
 
 func init() {
-	klog.SetOutput(os.Stdout)
+	var klogv1Flags flag.FlagSet
+	klogv1Flags.Set("logtostderr", "true")
+	klogv1Flags.Set("alsologtostderr", "true")
+	klogv1Flags.Set("stderrthreshold", "ERROR")
+	klog.InitFlags(&klogv1Flags)
 }
 
 var startUpTime = time.Now()
