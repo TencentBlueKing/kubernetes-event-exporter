@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,18 +11,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/exporter-toolkit/web"
-	"github.com/resmoio/kubernetes-event-exporter/pkg/version"
 	"github.com/rs/zerolog/log"
+
+	"github.com/resmoio/kubernetes-event-exporter/pkg/version"
 )
 
 type Store struct {
-	EventsProcessed      prometheus.Counter
-	EventsDiscarded      prometheus.Counter
-	WatchErrors          prometheus.Counter
-	SendErrors           prometheus.Counter
-	BuildInfo            prometheus.GaugeFunc
-	KubeApiReadCacheHits prometheus.Counter
-	KubeApiReadRequests  prometheus.Counter
+	EventsProcessed    prometheus.Counter
+	EventsDiscarded    prometheus.Counter
+	WatchErrors        prometheus.Counter
+	SendErrors         prometheus.Counter
+	BuildInfo          prometheus.GaugeFunc
+	RerunTotal         prometheus.Counter
+	EventsTypeReceived *prometheus.CounterVec
 }
 
 // promLogger implements promhttp.Logger
@@ -76,9 +78,7 @@ func Init(addr string, tlsConf string) {
 		fmt.Fprintf(w, "OK")
 	})
 
-	metricsServer := http.Server{
-		ReadHeaderTimeout: 5 * time.Second}
-
+	metricsServer := http.Server{ReadHeaderTimeout: 5 * time.Second}
 	metricsFlags := web.FlagConfig{
 		WebListenAddresses: &[]string{addr},
 		WebSystemdSocket:   new(bool),
@@ -89,12 +89,17 @@ func Init(addr string, tlsConf string) {
 	go web.ListenAndServe(&metricsServer, &metricsFlags, promLogger)
 }
 
-func NewMetricsStore(name_prefix string) *Store {
+const (
+	namespace = "kubeevent_exporter"
+)
+
+func newMetricsStore() *Store {
 	return &Store{
 		BuildInfo: promauto.NewGaugeFunc(
 			prometheus.GaugeOpts{
-				Name: name_prefix + "build_info",
-				Help: "A metric with a constant '1' value labeled by version, revision, branch, and goversion from which Kubernetes Event Exporter was built.",
+				Namespace: namespace,
+				Name:      "build_info",
+				Help:      "A metric with a constant '1' value labeled by version, revision, branch, and goversion from which Kubernetes Event Exporter was built.",
 				ConstLabels: prometheus.Labels{
 					"version":   version.Version,
 					"revision":  version.Revision(),
@@ -106,39 +111,36 @@ func NewMetricsStore(name_prefix string) *Store {
 			func() float64 { return 1 },
 		),
 		EventsProcessed: promauto.NewCounter(prometheus.CounterOpts{
-			Name: name_prefix + "events_sent",
-			Help: "The total number of events processed",
+			Namespace: namespace,
+			Name:      "events_sent_total",
+			Help:      "The total number of events processed",
 		}),
 		EventsDiscarded: promauto.NewCounter(prometheus.CounterOpts{
-			Name: name_prefix + "events_discarded",
-			Help: "The total number of events discarded because of being older than the maxEventAgeSeconds specified",
+			Namespace: namespace,
+			Name:      "events_discarded_total",
+			Help:      "The total number of events discarded because of being older than the maxEventAgeSeconds specified",
 		}),
 		WatchErrors: promauto.NewCounter(prometheus.CounterOpts{
-			Name: name_prefix + "watch_errors",
-			Help: "The total number of errors received from the informer",
+			Namespace: namespace,
+			Name:      "watch_errors_total",
+			Help:      "The total number of errors received from the client",
 		}),
 		SendErrors: promauto.NewCounter(prometheus.CounterOpts{
-			Name: name_prefix + "send_event_errors",
-			Help: "The total number of send event errors",
+			Namespace: namespace,
+			Name:      "send_event_errors_total",
+			Help:      "The total number of send event errors",
 		}),
-		KubeApiReadCacheHits: promauto.NewCounter(prometheus.CounterOpts{
-			Name: name_prefix + "kube_api_read_cache_hits",
-			Help: "The total number of read requests served from cache when looking up object metadata",
-		}),
-		KubeApiReadRequests: promauto.NewCounter(prometheus.CounterOpts{
-			Name: name_prefix + "kube_api_read_cache_misses",
-			Help: "The total number of read requests served from kube-apiserver when looking up object metadata",
+		EventsTypeReceived: promauto.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "receive_events_total",
+			Help:      "The total number of events received from kubernetes",
+		}, []string{"type"}),
+		RerunTotal: promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "rerun_total",
+			Help:      "The total number of rerun event",
 		}),
 	}
 }
 
-func DestroyMetricsStore(store *Store) {
-	prometheus.Unregister(store.EventsProcessed)
-	prometheus.Unregister(store.EventsDiscarded)
-	prometheus.Unregister(store.WatchErrors)
-	prometheus.Unregister(store.SendErrors)
-	prometheus.Unregister(store.BuildInfo)
-	prometheus.Unregister(store.KubeApiReadCacheHits)
-	prometheus.Unregister(store.KubeApiReadRequests)
-	store = nil
-}
+var Default = newMetricsStore()

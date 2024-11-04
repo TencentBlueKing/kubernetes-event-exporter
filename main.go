@@ -8,12 +8,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+
 	"github.com/resmoio/kubernetes-event-exporter/pkg/exporter"
 	"github.com/resmoio/kubernetes-event-exporter/pkg/kube"
 	"github.com/resmoio/kubernetes-event-exporter/pkg/metrics"
 	"github.com/resmoio/kubernetes-event-exporter/pkg/setup"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -79,9 +80,8 @@ func main() {
 	kubecfg.ContentType = "application/vnd.kubernetes.protobuf"
 
 	metrics.Init(*addr, *tlsConf)
-	metricsStore := metrics.NewMetricsStore(cfg.MetricsNamePrefix)
 
-	engine := exporter.NewEngine(&cfg, &exporter.ChannelBasedReceiverRegistry{MetricsStore: metricsStore})
+	engine := exporter.NewEngine(&cfg, &exporter.ChannelBasedReceiverRegistry{MetricsStore: metrics.Default})
 	onEvent := engine.OnEvent
 	if len(cfg.ClusterName) != 0 {
 		onEvent = func(event *kube.EnhancedEvent) {
@@ -92,8 +92,7 @@ func main() {
 		}
 	}
 
-	w := kube.NewEventWatcher(kubecfg, cfg.Namespace, cfg.MaxEventAgeSeconds, metricsStore, onEvent, cfg.OmitLookup, cfg.CacheSize)
-
+	w := kube.NewEventWatcher(kubecfg, cfg.Namespace, cfg.MaxEventAgeSeconds, onEvent)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
