@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -56,7 +55,7 @@ type innerWatcher struct {
 	clientset           *kubernetes.Clientset
 	ch                  chan innerEvent
 	closed              chan struct{}
-	lastResourceVersion int
+	lastResourceVersion string
 }
 
 type innerEvent struct {
@@ -113,40 +112,34 @@ func (iw *innerWatcher) Start() error {
 	}
 }
 
-func (iw *innerWatcher) lastRV() (int, error) {
+func (iw *innerWatcher) lastRV() (string, error) {
+	const chunkSize = 500
 	cli := iw.clientset.CoreV1().Events(iw.namespace)
-	obj, err := cli.List(iw.ctx, metav1.ListOptions{Limit: 500})
+	obj, err := cli.List(iw.ctx, metav1.ListOptions{Limit: chunkSize})
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 
-	if len(obj.Items) <= 0 {
-		return 0, errors.New("no event objects found")
-	}
-
-	var maxRV int
+	var lastRv string
 	for _, item := range obj.Items {
-		i, err := strconv.Atoi(item.ResourceVersion)
-		if err != nil {
-			continue
-		}
-		if i > maxRV {
-			maxRV = i
+		rv := item.GetResourceVersion()
+		if rv != "" {
+			lastRv = rv
 		}
 	}
 
-	if maxRV <= 0 {
-		return 0, errors.New("unknown resource version")
+	if lastRv == "" {
+		return "", errors.New("unknown resource version")
 	}
 
-	return maxRV, nil
+	return lastRv, nil
 }
 
 func (iw *innerWatcher) run() error {
 	iw.count++
-	log.Info().Int("ResourceVersion", iw.lastResourceVersion).Msgf("run inner-watcher at (%d) times", iw.count)
+	log.Info().Str("ResourceVersion", iw.lastResourceVersion).Msgf("run inner-watcher at (%d) times", iw.count)
 	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{
-		ResourceVersion: strconv.Itoa(iw.lastResourceVersion),
+		ResourceVersion: iw.lastResourceVersion,
 	})
 	if err != nil {
 		return err
@@ -182,10 +175,7 @@ func (iw *innerWatcher) run() error {
 					continue
 				}
 
-				i, err := strconv.Atoi(event.ResourceVersion)
-				if err == nil && i > iw.lastResourceVersion {
-					iw.lastResourceVersion = i
-				}
+				iw.lastResourceVersion = event.GetResourceVersion()
 				iw.ch <- innerEvent{
 					Type:  e.Type,
 					Event: event,
