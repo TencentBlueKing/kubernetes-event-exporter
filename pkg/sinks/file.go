@@ -2,12 +2,19 @@ package sinks
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 
-	"github.com/resmoio/kubernetes-event-exporter/pkg/kube"
+	"github.com/bytedance/sonic"
 	"gopkg.in/natefinch/lumberjack.v2"
+
+	"github.com/resmoio/kubernetes-event-exporter/pkg/kube"
 )
+
+var sonicAPI = sonic.Config{
+	EscapeHTML:       true,
+	CompactMarshaler: true,
+	CopyString:       true,
+}.Froze()
 
 type FileConfig struct {
 	Path       string                 `yaml:"path"`
@@ -24,7 +31,7 @@ func (f *FileConfig) Validate() error {
 
 type File struct {
 	writer  io.WriteCloser
-	encoder *json.Encoder
+	encoder sonic.Encoder
 	layout  map[string]interface{}
 	DeDot   bool
 }
@@ -39,7 +46,7 @@ func NewFileSink(config *FileConfig) (*File, error) {
 
 	return &File{
 		writer:  writer,
-		encoder: json.NewEncoder(writer),
+		encoder: sonicAPI.NewEncoder(writer),
 		layout:  config.Layout,
 		DeDot:   config.DeDot,
 	}, nil
