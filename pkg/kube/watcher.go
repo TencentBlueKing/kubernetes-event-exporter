@@ -88,9 +88,11 @@ func (iw *innerWatcher) Start() error {
 		for {
 			select {
 			case <-iw.ctx.Done():
+				log.Info().Msg("innerwatcher: context done")
 				return
 			case e, ok := <-w.ResultChan():
 				if !ok {
+					log.Info().Msg("innerwatcher: ResultChan was closed, loop exit")
 					return
 				}
 				iw.ch <- e
