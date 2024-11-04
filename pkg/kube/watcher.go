@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"os"
 	"sync"
 	"time"
 
@@ -13,9 +14,14 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	toolswtach "k8s.io/client-go/tools/watch"
+	"k8s.io/klog/v2"
 
 	"github.com/resmoio/kubernetes-event-exporter/pkg/metrics"
 )
+
+func init() {
+	klog.SetOutput(os.Stdout)
+}
 
 var startUpTime = time.Now()
 
