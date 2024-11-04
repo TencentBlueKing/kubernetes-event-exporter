@@ -2,7 +2,6 @@ package kube
 
 import (
 	"context"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	toolswtach "k8s.io/client-go/tools/watch"
 
 	"github.com/resmoio/kubernetes-event-exporter/pkg/metrics"
 )
@@ -52,7 +52,6 @@ type innerWatcher struct {
 	namespace string
 	clientset *kubernetes.Clientset
 	ch        chan watch.Event
-	closed    chan struct{}
 }
 
 func newInnerWatcher(ctx context.Context, namespace string, clientset *kubernetes.Clientset) *innerWatcher {
@@ -61,7 +60,6 @@ func newInnerWatcher(ctx context.Context, namespace string, clientset *kubernete
 		namespace: namespace,
 		clientset: clientset,
 		ch:        make(chan watch.Event, 1),
-		closed:    make(chan struct{}, 1),
 	}
 }
 
@@ -69,39 +67,19 @@ func (iw *innerWatcher) Ch() chan watch.Event {
 	return iw.ch
 }
 
-func (iw *innerWatcher) StartOrDie() {
+func (iw *innerWatcher) MustStart() {
 	if err := iw.Start(); err != nil {
 		panic(err)
 	}
 }
 
 func (iw *innerWatcher) Start() error {
-	defer func() {
-		close(iw.ch)
-	}()
-	if err := iw.run(); err != nil {
-		return err
-	}
-
-	for {
-		select {
-		case <-iw.ctx.Done():
-			return nil
-
-		case <-iw.closed:
-			n := time.Duration(10 + rand.Int31n(10))
-			log.Error().Msgf("Recv closed signal, waiting (%ds) then try to reconnecting", n)
-			time.Sleep(n * time.Second)
-			metrics.Default.RerunTotal.Add(1)
-			if err := iw.run(); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-func (iw *innerWatcher) run() error {
-	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{})
+	eventClient := iw.clientset.CoreV1().Events(iw.namespace)
+	w, err := toolswtach.NewRetryWatcher("", &cache.ListWatch{
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			return eventClient.Watch(iw.ctx, options)
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -113,7 +91,6 @@ func (iw *innerWatcher) run() error {
 				return
 			case e, ok := <-w.ResultChan():
 				if !ok {
-					iw.closed <- struct{}{} // notify the watcher conn has broken
 					return
 				}
 				iw.ch <- e
@@ -203,7 +180,7 @@ func (e *EventWatcher) Start() {
 
 	go func() {
 		defer e.wg.Done()
-		e.iw.StartOrDie()
+		e.iw.MustStart()
 	}()
 
 	go func() {

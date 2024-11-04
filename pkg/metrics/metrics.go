@@ -22,7 +22,6 @@ type Store struct {
 	WatchErrors        prometheus.Counter
 	SendErrors         prometheus.Counter
 	BuildInfo          prometheus.GaugeFunc
-	RerunTotal         prometheus.Counter
 	EventsTypeReceived *prometheus.CounterVec
 }
 
@@ -135,11 +134,6 @@ func newMetricsStore() *Store {
 			Name:      "receive_events_total",
 			Help:      "The total number of events received from kubernetes",
 		}, []string{"type"}),
-		RerunTotal: promauto.NewCounter(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "rerun_total",
-			Help:      "The total number of rerun event",
-		}),
 	}
 }
 
