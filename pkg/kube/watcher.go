@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"strconv"
 	"sync"
 	"time"
 
@@ -54,7 +55,7 @@ type innerWatcher struct {
 	clientset           *kubernetes.Clientset
 	ch                  chan innerEvent
 	closed              chan struct{}
-	lastResourceVersion string
+	lastResourceVersion int
 }
 
 type innerEvent struct {
@@ -112,23 +113,39 @@ func (iw *innerWatcher) Start() error {
 	}
 }
 
-func (iw *innerWatcher) lastRV() (string, error) {
+func (iw *innerWatcher) lastRV() (int, error) {
 	cli := iw.clientset.CoreV1().Events(iw.namespace)
-	obj, err := cli.List(iw.ctx, metav1.ListOptions{Limit: 1})
+	obj, err := cli.List(iw.ctx, metav1.ListOptions{Limit: 500})
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 
 	if len(obj.Items) <= 0 {
-		return "", errors.New("no event objects found")
+		return 0, errors.New("no event objects found")
 	}
-	return obj.Items[0].ResourceVersion, nil
+
+	var maxRV int
+	for _, item := range obj.Items {
+		i, err := strconv.Atoi(item.ResourceVersion)
+		if err != nil {
+			continue
+		}
+		if i > maxRV {
+			maxRV = i
+		}
+	}
+
+	if maxRV <= 0 {
+		return 0, errors.New("unknown resource version")
+	}
+
+	return maxRV, nil
 }
 
 func (iw *innerWatcher) run() error {
-	log.Info().Str("LastResourceVersion", iw.lastResourceVersion).Msg("run inner-watcher")
+	log.Info().Int("LastResourceVersion", iw.lastResourceVersion).Msg("run inner-watcher")
 	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{
-		ResourceVersion: iw.lastResourceVersion,
+		ResourceVersion: strconv.Itoa(iw.lastResourceVersion),
 	})
 	if err != nil {
 		return err
@@ -152,7 +169,10 @@ func (iw *innerWatcher) run() error {
 					continue
 				}
 
-				iw.lastResourceVersion = event.ResourceVersion
+				i, err := strconv.Atoi(event.ResourceVersion)
+				if err == nil && i > iw.lastResourceVersion {
+					iw.lastResourceVersion = i
+				}
 				iw.ch <- innerEvent{
 					Type:  e.Type,
 					Event: event,
