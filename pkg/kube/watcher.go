@@ -103,7 +103,7 @@ func (iw *innerWatcher) Start() error {
 
 		case <-iw.closed:
 			log.Warn().Msg("Recv closed signal, try to reconnecting")
-			time.Sleep(10 * time.Second)
+			time.Sleep(5 * time.Second)
 			metrics.Default.RerunTotal.Add(1)
 			if err := iw.run(); err != nil {
 				return err
@@ -129,13 +129,20 @@ func (iw *innerWatcher) lastRV() (string, error) {
 		}
 
 		for _, item := range obj.Items {
-			rv := item.GetResourceVersion()
-			if rv != "" {
-				lastRv = rv
+			// TODO(mando): 这是不是标准的用法 因为官方文档中表示 ResrouceVersion 是 '不可比较大小' 的
+			// 但这里暂时没有更好的方案（据观察，RV 应该是个递增的数值）
+			if rv := item.GetResourceVersion(); rv != "" {
+				if rv > lastRv {
+					lastRv = rv
+				}
 			}
 		}
 		round++
-		log.Info().Int("round", round).Str("continue", obj.Continue).Str("RV", lastRv).Msg("fetch last rv")
+		log.Info().
+			Int("round", round).
+			Str("continue", obj.Continue).
+			Str("RV", lastRv).
+			Msg("continue fetch last resource version")
 
 		if obj.Continue == "" {
 			break
