@@ -3,7 +3,6 @@ package kube
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -168,11 +167,7 @@ func (iw *innerWatcher) run() error {
 
 				case *metav1.Status:
 					if obj.Code == http.StatusGone {
-						rv, err := iw.lastRV()
-						if err != nil {
-							panic(fmt.Errorf("RV too old errors: %v", err))
-						}
-						iw.lastResourceVersion = rv
+						panic("RV too old errors") // lets it crash
 					}
 					log.Error().Msgf("Recv Status Event: %#v", obj)
 					metrics.Default.WatchErrors.Inc()
