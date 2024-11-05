@@ -103,7 +103,7 @@ func (iw *innerWatcher) Start() error {
 
 		case <-iw.closed:
 			log.Warn().Msg("Recv closed signal, try to reconnecting")
-			time.Sleep(10 * time.Second)
+			time.Sleep(5 * time.Second)
 			metrics.Default.RerunTotal.Add(1)
 			if err := iw.run(); err != nil {
 				return err
@@ -114,25 +114,47 @@ func (iw *innerWatcher) Start() error {
 
 func (iw *innerWatcher) lastRV() (string, error) {
 	const chunkSize = 500
-	cli := iw.clientset.CoreV1().Events(iw.namespace)
-	obj, err := cli.List(iw.ctx, metav1.ListOptions{Limit: chunkSize})
-	if err != nil {
-		return "", err
-	}
-
+	var nextToken string
 	var lastRv string
-	for _, item := range obj.Items {
-		rv := item.GetResourceVersion()
-		if rv != "" {
-			lastRv = rv
+	cli := iw.clientset.CoreV1().Events(iw.namespace)
+
+	var round int
+	for {
+		obj, err := cli.List(iw.ctx, metav1.ListOptions{
+			Continue: nextToken,
+			Limit:    chunkSize,
+		})
+		if err != nil {
+			return "", err
 		}
+
+		for _, item := range obj.Items {
+			// TODO(mando): 这是不是标准的用法 因为官方文档中表示 ResrouceVersion 是 '不可比较大小' 的
+			// 但这里暂时没有更好的方案（据观察，RV 应该是个递增的数值）
+			if rv := item.GetResourceVersion(); rv != "" {
+				if rv > lastRv {
+					lastRv = rv
+				}
+			}
+		}
+		round++
+		log.Info().
+			Int("round", round).
+			Str("continue", obj.Continue).
+			Str("RV", lastRv).
+			Msg("continue fetch last resource version")
+
+		if obj.Continue == "" {
+			break
+		}
+		nextToken = obj.Continue
 	}
 
 	if lastRv == "" {
 		return "", errors.New("unknown resource version")
 	}
 
-	log.Info().Msgf("get last resource version: %v", lastRv)
+	log.Info().Msgf("last resource version: %v", lastRv)
 	return lastRv, nil
 }
 
