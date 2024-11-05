@@ -114,25 +114,40 @@ func (iw *innerWatcher) Start() error {
 
 func (iw *innerWatcher) lastRV() (string, error) {
 	const chunkSize = 500
-	cli := iw.clientset.CoreV1().Events(iw.namespace)
-	obj, err := cli.List(iw.ctx, metav1.ListOptions{Limit: chunkSize})
-	if err != nil {
-		return "", err
-	}
-
+	var nextToken string
 	var lastRv string
-	for _, item := range obj.Items {
-		rv := item.GetResourceVersion()
-		if rv != "" {
-			lastRv = rv
+	cli := iw.clientset.CoreV1().Events(iw.namespace)
+
+	var round int
+	for {
+		obj, err := cli.List(iw.ctx, metav1.ListOptions{
+			Continue: nextToken,
+			Limit:    chunkSize,
+		})
+		if err != nil {
+			return "", err
 		}
+
+		for _, item := range obj.Items {
+			rv := item.GetResourceVersion()
+			if rv != "" {
+				lastRv = rv
+			}
+		}
+		round++
+		log.Info().Int("round", round).Str("continue", obj.Continue).Str("RV", lastRv).Msg("fetch last rv")
+
+		if obj.Continue == "" {
+			break
+		}
+		nextToken = obj.Continue
 	}
 
 	if lastRv == "" {
 		return "", errors.New("unknown resource version")
 	}
 
-	log.Info().Msgf("get last resource version: %v", lastRv)
+	log.Info().Msgf("last resource version: %v", lastRv)
 	return lastRv, nil
 }
 
