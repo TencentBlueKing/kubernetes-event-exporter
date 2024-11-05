@@ -2,7 +2,8 @@ package kube
 
 import (
 	"context"
-	"math/rand"
+	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -48,11 +49,18 @@ func NewEventWatcher(config *rest.Config, namespace string, MaxEventAgeSeconds i
 }
 
 type innerWatcher struct {
-	ctx       context.Context
-	namespace string
-	clientset *kubernetes.Clientset
-	ch        chan watch.Event
-	closed    chan struct{}
+	ctx                 context.Context
+	namespace           string
+	count               int
+	clientset           *kubernetes.Clientset
+	ch                  chan innerEvent
+	closed              chan struct{}
+	lastResourceVersion string
+}
+
+type innerEvent struct {
+	Type  watch.EventType
+	Event *corev1.Event
 }
 
 func newInnerWatcher(ctx context.Context, namespace string, clientset *kubernetes.Clientset) *innerWatcher {
@@ -60,25 +68,30 @@ func newInnerWatcher(ctx context.Context, namespace string, clientset *kubernete
 		ctx:       ctx,
 		namespace: namespace,
 		clientset: clientset,
-		ch:        make(chan watch.Event, 1),
+		ch:        make(chan innerEvent, 1),
 		closed:    make(chan struct{}, 1),
 	}
 }
 
-func (iw *innerWatcher) Ch() chan watch.Event {
+func (iw *innerWatcher) Ch() chan innerEvent {
 	return iw.ch
 }
 
-func (iw *innerWatcher) StartOrDie() {
+func (iw *innerWatcher) MustStart() {
 	if err := iw.Start(); err != nil {
 		panic(err)
 	}
 }
 
 func (iw *innerWatcher) Start() error {
-	defer func() {
-		close(iw.ch)
-	}()
+	defer close(iw.ch)
+
+	rv, err := iw.lastRV()
+	if err != nil {
+		return err
+	}
+	iw.lastResourceVersion = rv
+
 	if err := iw.run(); err != nil {
 		return err
 	}
@@ -89,9 +102,8 @@ func (iw *innerWatcher) Start() error {
 			return nil
 
 		case <-iw.closed:
-			n := time.Duration(10 + rand.Int31n(10))
-			log.Error().Msgf("Recv closed signal, waiting (%ds) then try to reconnecting", n)
-			time.Sleep(n * time.Second)
+			log.Warn().Msg("Recv closed signal, try to reconnecting")
+			time.Sleep(10 * time.Second)
 			metrics.Default.RerunTotal.Add(1)
 			if err := iw.run(); err != nil {
 				return err
@@ -100,8 +112,39 @@ func (iw *innerWatcher) Start() error {
 	}
 }
 
+func (iw *innerWatcher) lastRV() (string, error) {
+	const chunkSize = 500
+	cli := iw.clientset.CoreV1().Events(iw.namespace)
+	obj, err := cli.List(iw.ctx, metav1.ListOptions{Limit: chunkSize})
+	if err != nil {
+		return "", err
+	}
+
+	var lastRv string
+	for _, item := range obj.Items {
+		rv := item.GetResourceVersion()
+		if rv != "" {
+			lastRv = rv
+		}
+	}
+
+	if lastRv == "" {
+		return "", errors.New("unknown resource version")
+	}
+
+	log.Info().Msgf("get last resource version: %v", lastRv)
+	return lastRv, nil
+}
+
 func (iw *innerWatcher) run() error {
-	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{})
+	iw.count++
+
+	timeout := int64(7200)
+	log.Info().Str("ResourceVersion", iw.lastResourceVersion).Msgf("run inner-watcher at (%d) times", iw.count)
+	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{
+		ResourceVersion: iw.lastResourceVersion,
+		TimeoutSeconds:  &timeout,
+	})
 	if err != nil {
 		return err
 	}
@@ -116,7 +159,31 @@ func (iw *innerWatcher) run() error {
 					iw.closed <- struct{}{} // notify the watcher conn has broken
 					return
 				}
-				iw.ch <- e
+
+				var event *corev1.Event
+				switch obj := e.Object.(type) {
+				case *corev1.Event:
+					event = obj
+
+				case *metav1.Status:
+					if obj.Code == http.StatusGone {
+						panic("RV too old errors") // lets it crash
+					}
+					log.Error().Msgf("Recv Status Event: %#v", obj)
+					metrics.Default.WatchErrors.Inc()
+					continue
+
+				default:
+					log.Error().Msgf("Unknown Type (%T), event.Type(%v), event.Obj=(%#v)", e.Object, e.Type, e.Object)
+					metrics.Default.WatchErrors.Inc()
+					continue
+				}
+
+				iw.lastResourceVersion = event.GetResourceVersion()
+				iw.ch <- innerEvent{
+					Type:  e.Type,
+					Event: event,
+				}
 			}
 		}
 	}()
@@ -133,23 +200,13 @@ func (e *EventWatcher) loopHandle() {
 			// only handles Added events
 			e.metricsStore.EventsTypeReceived.WithLabelValues(string(evt.Type)).Add(1)
 			if evt.Type == watch.Added {
-				e.OnAdd(evt.Object)
+				e.onEvent(evt.Event)
 			}
 
 		case <-e.ctx.Done():
 			return
 		}
 	}
-}
-
-func (e *EventWatcher) OnAdd(obj interface{}) {
-	event, ok := obj.(*corev1.Event)
-	if !ok {
-		log.Error().Msgf("Expected Event type, but got %T", obj)
-		e.metricsStore.WatchErrors.Inc()
-		return
-	}
-	e.onEvent(event)
 }
 
 // Ignore events older than the maxEventAgeSeconds
@@ -203,7 +260,7 @@ func (e *EventWatcher) Start() {
 
 	go func() {
 		defer e.wg.Done()
-		e.iw.StartOrDie()
+		e.iw.MustStart()
 	}()
 
 	go func() {
