@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
@@ -128,14 +129,9 @@ func (iw *innerWatcher) lastRV() (string, error) {
 			return "", err
 		}
 
-		for _, item := range obj.Items {
-			// TODO(mando): 这是不是标准的用法 因为官方文档中表示 ResrouceVersion 是 '不可比较大小' 的
-			// 但这里暂时没有更好的方案（据观察，RV 应该是个递增的数值）
-			if rv := item.GetResourceVersion(); rv != "" {
-				if rv > lastRv {
-					lastRv = rv
-				}
-			}
+		lastRv, err = meta.NewAccessor().ResourceVersion(obj)
+		if err != nil {
+			return "", err
 		}
 		round++
 		log.Info().
