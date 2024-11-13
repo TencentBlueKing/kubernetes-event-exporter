@@ -128,13 +128,15 @@ func (iw *innerWatcher) lastRV() (string, error) {
 			return "", err
 		}
 
+		lastRv = obj.ResourceVersion
 		for _, item := range obj.Items {
-			// TODO(mando): 这是不是标准的用法 因为官方文档中表示 ResrouceVersion 是 '不可比较大小' 的
+			// TODO(mando): 这是不是标准的用法 因为官方文档中表示 ResourceVersion 是 '不可比较大小' 的
 			// 但这里暂时没有更好的方案（据观察，RV 应该是个递增的数值）
 			if rv := item.GetResourceVersion(); rv != "" {
-				if rv > lastRv {
-					lastRv = rv
-				}
+				//if rv > lastRv {
+				//	lastRv = rv
+				//}
+				log.Log().Str("RV", rv).Msg("row rv")
 			}
 		}
 		round++
