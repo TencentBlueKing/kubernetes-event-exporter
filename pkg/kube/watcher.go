@@ -215,8 +215,12 @@ func (e *EventWatcher) loopHandle() {
 			}
 			// only handles Added events
 			e.metricsStore.EventsTypeReceived.WithLabelValues(string(evt.Type)).Add(1)
-			if evt.Type == watch.Added {
+			switch evt.Type {
+			case watch.Added:
 				e.onEvent(evt.Event)
+
+			case watch.Bookmark:
+				log.Info().Str("RV", evt.Event.ResourceVersion).Msg("recv bookmark event")
 			}
 
 		case <-e.ctx.Done():
