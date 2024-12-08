@@ -157,11 +157,12 @@ func (iw *innerWatcher) lastRV() (string, error) {
 func (iw *innerWatcher) run() error {
 	iw.count++
 
-	timeout := int64(7200)
-	log.Info().Str("ResourceVersion", iw.lastResourceVersion).Msgf("run inner-watcher at (%d) times", iw.count)
+	timeout := int64(3600 * 12) // 12h
+	log.Info().Str("ResourceVersion", iw.lastResourceVersion).Msgf("run innerwatcher at (%d) times", iw.count)
 	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{
-		ResourceVersion: iw.lastResourceVersion,
-		TimeoutSeconds:  &timeout,
+		ResourceVersion:     iw.lastResourceVersion,
+		TimeoutSeconds:      &timeout,
+		AllowWatchBookmarks: true,
 	})
 	if err != nil {
 		return err
@@ -187,9 +188,6 @@ func (iw *innerWatcher) run() error {
 					if obj.Code == http.StatusGone {
 						panic("RV too old errors") // lets it crash
 					}
-					log.Error().Msgf("Recv Status Event: %#v", obj)
-					metrics.Default.WatchErrors.Inc()
-					continue
 
 				default:
 					log.Error().Msgf("Unknown Type (%T), event.Type(%v), event.Obj=(%#v)", e.Object, e.Type, e.Object)
