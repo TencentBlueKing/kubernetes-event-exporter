@@ -157,7 +157,7 @@ func (iw *innerWatcher) lastRV() (string, error) {
 func (iw *innerWatcher) run() error {
 	iw.count++
 
-	timeout := int64(3600 * 12) // 12h
+	timeout := int64(3600 * 6) // 6h
 	log.Info().Str("ResourceVersion", iw.lastResourceVersion).Msgf("run innerwatcher at (%d) times", iw.count)
 	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{
 		ResourceVersion:     iw.lastResourceVersion,
@@ -173,6 +173,7 @@ func (iw *innerWatcher) run() error {
 			select {
 			case <-iw.ctx.Done():
 				return
+
 			case e, ok := <-w.ResultChan():
 				if !ok {
 					iw.closed <- struct{}{} // notify the watcher conn has broken
@@ -195,6 +196,11 @@ func (iw *innerWatcher) run() error {
 					continue
 				}
 
+				if e.Type == watch.Bookmark {
+					log.Info().Str("currRV", iw.lastResourceVersion).Str("bookmarkRV", event.GetResourceVersion()).Msg("bookmark event")
+					iw.lastResourceVersion = event.GetResourceVersion()
+				}
+
 				iw.lastResourceVersion = event.GetResourceVersion()
 				iw.ch <- innerEvent{
 					Type:  e.Type,
@@ -215,12 +221,8 @@ func (e *EventWatcher) loopHandle() {
 			}
 			// only handles Added events
 			e.metricsStore.EventsTypeReceived.WithLabelValues(string(evt.Type)).Add(1)
-			switch evt.Type {
-			case watch.Added:
+			if evt.Type == watch.Added {
 				e.onEvent(evt.Event)
-
-			case watch.Bookmark:
-				log.Info().Str("RV", evt.Event.ResourceVersion).Msg("recv bookmark event")
 			}
 
 		case <-e.ctx.Done():
