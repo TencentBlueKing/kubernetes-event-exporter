@@ -157,7 +157,7 @@ func (iw *innerWatcher) lastRV() (string, error) {
 func (iw *innerWatcher) run() error {
 	iw.count++
 
-	// 当触发 http.StatusGone 异常是 rv 被置空后这里需要重 list 一遍
+	// 当触发 http.StatusGone 异常时 rv 被置空后这里需要重 list 一遍
 	if iw.lastResourceVersion == "" {
 		iw.lastResourceVersion, _ = iw.lastRV()
 	}
