@@ -196,12 +196,14 @@ func (iw *innerWatcher) run() error {
 					continue
 				}
 
+				newRV := event.GetResourceVersion()
 				if e.Type == watch.Bookmark {
-					log.Info().Str("currRV", iw.lastResourceVersion).Str("bookmarkRV", event.GetResourceVersion()).Msg("bookmark event")
-					iw.lastResourceVersion = event.GetResourceVersion()
+					log.Info().Str("currRV", iw.lastResourceVersion).Str("bookmarkRV", newRV).Msg("bookmark event")
+					iw.lastResourceVersion = newRV
+					continue
 				}
 
-				iw.lastResourceVersion = event.GetResourceVersion()
+				iw.lastResourceVersion = newRV
 				iw.ch <- innerEvent{
 					Type:  e.Type,
 					Event: event,
