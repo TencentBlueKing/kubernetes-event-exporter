@@ -157,6 +157,11 @@ func (iw *innerWatcher) lastRV() (string, error) {
 func (iw *innerWatcher) run() error {
 	iw.count++
 
+	// 当触发 http.StatusGone 异常是 rv 被置空后这里需要重 list 一遍
+	if iw.lastResourceVersion == "" {
+		iw.lastResourceVersion, _ = iw.lastRV()
+	}
+
 	timeout := int64(3600 * 6) // 6h
 	log.Info().Str("ResourceVersion", iw.lastResourceVersion).Msgf("run innerwatcher at (%d) times", iw.count)
 	w, err := iw.clientset.CoreV1().Events(iw.namespace).Watch(iw.ctx, metav1.ListOptions{
@@ -168,6 +173,21 @@ func (iw *innerWatcher) run() error {
 		return err
 	}
 
+	handleStatus := func(status *metav1.Status) {
+		switch status.Code {
+		// http.StatusGone RV too old error
+		// 需要关闭 channel 同时置空 lastResourceVersion 以通知上层重新触发 list 操作
+		case http.StatusGone:
+			w.Stop()
+			iw.lastResourceVersion = ""
+			log.Warn().Msg("RV too old errors")
+			metrics.Default.WatchErrors.Inc()
+
+		default:
+			log.Warn().Int("code", int(status.Code)).Msg("recv StatusEvent")
+		}
+	}
+
 	go func() {
 		for {
 			select {
@@ -176,7 +196,7 @@ func (iw *innerWatcher) run() error {
 
 			case e, ok := <-w.ResultChan():
 				if !ok {
-					iw.closed <- struct{}{} // notify the watcher conn has broken
+					iw.closed <- struct{}{}
 					return
 				}
 
@@ -186,9 +206,8 @@ func (iw *innerWatcher) run() error {
 					event = obj
 
 				case *metav1.Status:
-					if obj.Code == http.StatusGone {
-						panic("RV too old errors") // lets it crash
-					}
+					handleStatus(obj)
+					continue
 
 				default:
 					log.Error().Msgf("Unknown Type (%T), event.Type(%v), event.Obj=(%#v)", e.Object, e.Type, e.Object)
@@ -196,6 +215,7 @@ func (iw *innerWatcher) run() error {
 					continue
 				}
 
+				// bookmark 事件下游无需处理
 				newRV := event.GetResourceVersion()
 				if e.Type == watch.Bookmark {
 					log.Info().Str("currRV", iw.lastResourceVersion).Str("bookmarkRV", newRV).Msg("bookmark event")
