@@ -103,7 +103,7 @@ func (iw *innerWatcher) Start() error {
 			return nil
 
 		case <-iw.closed:
-			log.Warn().Msg("Recv closed signal, try to reconnecting")
+			log.Info().Msg("got closed signal, resync events")
 			time.Sleep(5 * time.Second)
 			metrics.Default.RerunTotal.Add(1)
 			if err := iw.run(); err != nil {
