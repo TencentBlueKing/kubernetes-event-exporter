@@ -241,9 +241,9 @@ func (e *EventWatcher) loopHandle() {
 			if !ok {
 				return
 			}
-			// only handles Added events
+
 			e.metricsStore.EventsTypeReceived.WithLabelValues(string(evt.Type)).Add(1)
-			if evt.Type == watch.Added {
+			if evt.Type == watch.Added || evt.Type == watch.Modified {
 				e.onEvent(evt.Event)
 			}
 
